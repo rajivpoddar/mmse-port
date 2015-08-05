@@ -5,14 +5,12 @@ from scipy.special import *
 from numpy.matlib import repmat
 from scipy.signal import lfilter
 from scikits.audiolab import Sndfile, Format
+import argparse
 import sys
 
 np.seterr('ignore')
 
-def MMSESTSA85(signal, fs, IS=0.25):
-    #W = int(np.fix(0.025 * fs))
-    W = 1024 * 1
-
+def MMSESTSA85(signal, fs, IS=0.25, W=1024, NoiseMargin=3):
     SP = 0.4
     wnd = np.hamming(W)
 
@@ -42,7 +40,7 @@ def MMSESTSA85(signal, fs, IS=0.25):
             SpeechFlag = 0
             NoiseCounter = 100
         else:
-            NoiseFlag, SpeechFlag, NoiseCounter, Dist = vad(Y[:,i], N, NoiseCounter)
+            NoiseFlag, SpeechFlag, NoiseCounter, Dist = vad(Y[:,i], N, NoiseCounter, NoiseMargin)
 
         if SpeechFlag == 0:
             N = (NoiseLength * N + Y[:,i]) / (NoiseLength + 1)
@@ -55,12 +53,12 @@ def MMSESTSA85(signal, fs, IS=0.25):
         nu = Gamma * xi / (1 + xi)
 
         # log MMSE algo
-        G = (xi/(1 + xi)) * np.exp(0.5 * expn(1, nu))
+        #G = (xi/(1 + xi)) * np.exp(0.5 * expn(1, nu))
 
         # MMSE STSA algo
-        #G = (Gamma1p5 * np.sqrt(nu)) / Gamma * np.exp(-1 * nu / 2) * ((1 + nu) * bessel(0, nu / 2) + nu * bessel(1, nu / 2))
-        #Indx = np.isnan(G) | np.isinf(G)
-        #G[Indx] = xi[Indx] / (1 + xi[Indx])
+        G = (Gamma1p5 * np.sqrt(nu)) / Gamma * np.exp(-1 * nu / 2) * ((1 + nu) * bessel(0, nu / 2) + nu * bessel(1, nu / 2))
+        Indx = np.isnan(G) | np.isinf(G)
+        G[Indx] = xi[Indx] / (1 + xi[Indx])
 
         X[:,i] = G * Y[:,i]
 
@@ -99,7 +97,7 @@ def segment(signal, W, SP, Window):
     Seg = signal[Index] * hw
     return Seg
 
-def vad(signal, noise, NoiseCounter, NoiseMargin = 3, Hangover = 8):
+def vad(signal, noise, NoiseCounter, NoiseMargin, Hangover = 8):
     SpectralDist = 20 * (np.log10(signal) - np.log10(noise))
     SpectralDist[SpectralDist < 0] = 0
 
@@ -123,13 +121,25 @@ def bessel(v, X):
 
 # main
 
-input_file = Sndfile(sys.argv[1], 'r')
+parser = argparse.ArgumentParser(description='Speech enhancement/noise reduction using Log MMSE STSA algorithm')
+parser.add_argument('input_file', action='store', type=str, help='input file to clean')
+parser.add_argument('output_file', action='store', type=str, help='output file to write (default: stdout)', default=sys.stdout)
+parser.add_argument('-i, --initial-noise', action='store', type=float, dest='initial_noise', help='initial noise in ms (default: 0.25)', default=0.25)
+parser.add_argument('-w, --window-size', action='store', type=int, dest='window_size', help='hamming window size (default: 0.025*sample rate)', default=0)
+parser.add_argument('-n, --noise-threshold', action='store', type=int, dest='noise_threshold', help='noise thresold (default: 3)', default=3)
+args = parser.parse_args()
+
+input_file = Sndfile(args.input_file, 'r')
 
 fs = input_file.samplerate
 num_frames = input_file.nframes
-chunk_size = 1024*1024
 
-output_file = Sndfile(sys.argv[2], 'w', Format(type=input_file.file_format, encoding='pcm16', endianness=input_file.endianness), input_file.channels, fs)
+output_file = Sndfile(args.output_file, 'w', Format(type=input_file.file_format, encoding='pcm16', endianness=input_file.endianness), input_file.channels, fs)
+
+if args.window_size == 0:
+    args.window_size = int(np.fix(0.025 * fs))
+
+chunk_size = int(np.fix(60*fs))
 
 frames_read = 0
 while (frames_read < num_frames):
@@ -137,11 +147,10 @@ while (frames_read < num_frames):
     signal = input_file.read_frames(frames)
     frames_read = frames_read + frames
 
-    output = MMSESTSA85(signal, fs)
+    output = MMSESTSA85(signal, fs, args.initial_noise, args.window_size, args.noise_threshold)
 
     output = np.array(output*np.iinfo(np.int16).max, dtype=np.int16)
     output_file.write_frames(output)
 
 input_file.close()
-output_file.sync()
 output_file.close()
