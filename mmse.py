@@ -36,17 +36,19 @@ def MMSESTSA85(signal, fs, IS=0.25, W=1024, NoiseMargin=3):
     X = np.zeros(Y.shape)
 
     for i in range(numberOfFrames):
+        Y_i = Y[:,i]
+
         if i < NIS:
             SpeechFlag = 0
             NoiseCounter = 100
         else:
-            NoiseFlag, SpeechFlag, NoiseCounter, Dist = vad(Y[:,i], N, NoiseCounter, NoiseMargin)
+            NoiseFlag, SpeechFlag, NoiseCounter, Dist = vad(Y_i, N, NoiseCounter, NoiseMargin)
 
         if SpeechFlag == 0:
-            N = (NoiseLength * N + Y[:,i]) / (NoiseLength + 1)
-            LambdaD = (NoiseLength * LambdaD + (Y[:,i] ** 2)) / (1 + NoiseLength)
+            N = (NoiseLength * N + Y_i) / (NoiseLength + 1)
+            LambdaD = (NoiseLength * LambdaD + (Y_i ** 2)) / (1 + NoiseLength)
 
-        gammaNew = (Y[:,i] ** 2) / LambdaD
+        gammaNew = (Y_i ** 2) / LambdaD
         xi = alpha * (G ** 2) * Gamma + (1 - alpha) * np.maximum(gammaNew - 1, 0)
 
         Gamma = gammaNew
@@ -60,7 +62,7 @@ def MMSESTSA85(signal, fs, IS=0.25, W=1024, NoiseMargin=3):
         Indx = np.isnan(G) | np.isinf(G)
         G[Indx] = xi[Indx] / (1 + xi[Indx])
 
-        X[:,i] = G * Y[:,i]
+        X[:,i] = G * Y_i
 
     output = OverlapAdd2(X, YPhase, W, SP * W)
     return output
