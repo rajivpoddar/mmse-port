@@ -2,9 +2,9 @@ from __future__ import division
 import numpy as np
 import math
 from scipy.special import *
-from scipy.io import wavfile
 from numpy.matlib import repmat
 from scipy.signal import lfilter
+from scikits.audiolab import Sndfile, Format
 import sys
 
 np.seterr('ignore')
@@ -54,8 +54,10 @@ def MMSESTSA85(signal, fs, IS=0.25):
         Gamma = gammaNew
         nu = Gamma * xi / (1 + xi)
 
+        # log MMSE algo
         G = (xi/(1 + xi)) * np.exp(0.5 * expn(1, nu))
 
+        # MMSE STSA algo
         #G = (Gamma1p5 * np.sqrt(nu)) / Gamma * np.exp(-1 * nu / 2) * ((1 + nu) * bessel(0, nu / 2) + nu * bessel(1, nu / 2))
         #Indx = np.isnan(G) | np.isinf(G)
         #G[Indx] = xi[Indx] / (1 + xi[Indx])
@@ -121,11 +123,25 @@ def bessel(v, X):
 
 # main
 
-fs, signal = wavfile.read(sys.argv[1])
-dt = signal.dtype
-signal = np.array(signal/(np.iinfo(dt).max), dtype='float')
+input_file = Sndfile(sys.argv[1], 'r')
 
-output = MMSESTSA85(signal, fs)
+fs = input_file.samplerate
+num_frames = input_file.nframes
+chunk_size = 1024*1024
 
-output = np.array(output*np.iinfo(dt).max, dtype=dt)
-wavfile.write(sys.argv[2], fs, output)
+output_file = Sndfile(sys.argv[2], 'w', Format(type=input_file.file_format, encoding='pcm16', endianness=input_file.endianness), input_file.channels, fs)
+
+frames_read = 0
+while (frames_read < num_frames):
+    frames = num_frames - frames_read if frames_read + chunk_size > num_frames else chunk_size
+    signal = input_file.read_frames(frames)
+    frames_read = frames_read + frames
+
+    output = MMSESTSA85(signal, fs)
+
+    output = np.array(output*np.iinfo(np.int16).max, dtype=np.int16)
+    output_file.write_frames(output)
+
+input_file.close()
+output_file.sync()
+output_file.close()
