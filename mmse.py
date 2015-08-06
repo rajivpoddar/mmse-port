@@ -1,3 +1,5 @@
+#!/usr/bin/python
+
 from __future__ import division
 import numpy as np
 import math
@@ -10,11 +12,9 @@ import sys
 
 np.seterr('ignore')
 
-def MMSESTSA85(signal, fs, IS=0.25, W=1024, NoiseMargin=3):
+def MMSESTSA(signal, fs, IS=0.25, W=1024, NoiseMargin=3, saved_params=None):
     SP = 0.4
     wnd = np.hamming(W)
-
-    NIS = int(np.fix(((IS * fs - W) / (SP * W) + 1)))
 
     y = segment(signal, W, SP, wnd)
     Y = np.fft.fft(y, axis=0)
@@ -22,12 +22,19 @@ def MMSESTSA85(signal, fs, IS=0.25, W=1024, NoiseMargin=3):
     Y = np.abs(Y[0:int(np.fix(len(Y)/2))+1,:])
     numberOfFrames = Y.shape[1]
 
-    N = np.mean(Y[:,0:NIS].T).T
-    LambdaD = np.mean((Y[:,0:NIS].T) ** 2).T
+    NoiseLength = 9
+    NoiseCounter = 0
     alpha = 0.99
 
-    NoiseCounter = 0
-    NoiseLength = 9
+    NIS = int(np.fix(((IS * fs - W) / (SP * W) + 1)))
+    N = np.mean(Y[:,0:NIS].T).T
+    LambdaD = np.mean((Y[:,0:NIS].T) ** 2).T
+
+    if saved_params != None:
+        NIS = 0
+        N = saved_params['N']
+        LambdaD = saved_params['LambdaD']
+        NoiseCounter = saved_params['NoiseCounter']
 
     G = np.ones(N.shape)
     Gamma = G
@@ -42,7 +49,7 @@ def MMSESTSA85(signal, fs, IS=0.25, W=1024, NoiseMargin=3):
             SpeechFlag = 0
             NoiseCounter = 100
         else:
-            NoiseFlag, SpeechFlag, NoiseCounter, Dist = vad(Y_i, N, NoiseCounter, NoiseMargin)
+            SpeechFlag, NoiseCounter = vad(Y_i, N, NoiseCounter, NoiseMargin)
 
         if SpeechFlag == 0:
             N = (NoiseLength * N + Y_i) / (NoiseLength + 1)
@@ -65,10 +72,10 @@ def MMSESTSA85(signal, fs, IS=0.25, W=1024, NoiseMargin=3):
         X[:,i] = G * Y_i
 
     output = OverlapAdd2(X, YPhase, W, SP * W)
-    return output
+    return output, {'N': N, 'LambdaD': LambdaD, 'NoiseCounter': NoiseCounter}
 
 def OverlapAdd2(XNEW, yphase, windowLen, ShiftLen):
-    FreqRes, FrameNum = XNEW.shape
+    FrameNum = XNEW.shape[1]
     Spec = XNEW * np.exp(1j * yphase)
 
     ShiftLen = int(np.fix(ShiftLen))
@@ -116,7 +123,7 @@ def vad(signal, noise, NoiseCounter, NoiseMargin, Hangover = 8):
     else:
         SpeechFlag=1
 
-    return NoiseFlag, SpeechFlag, NoiseCounter, Dist
+    return SpeechFlag, NoiseCounter
 
 def bessel(v, X):
     return ((1j**(-v))*jv(v,1j*X)).real
@@ -126,8 +133,8 @@ def bessel(v, X):
 parser = argparse.ArgumentParser(description='Speech enhancement/noise reduction using Log MMSE STSA algorithm')
 parser.add_argument('input_file', action='store', type=str, help='input file to clean')
 parser.add_argument('output_file', action='store', type=str, help='output file to write (default: stdout)', default=sys.stdout)
-parser.add_argument('-i, --initial-noise', action='store', type=float, dest='initial_noise', help='initial noise in ms (default: 0.25)', default=0.25)
-parser.add_argument('-w, --window-size', action='store', type=int, dest='window_size', help='hamming window size (default: 0.025*sample rate)', default=0)
+parser.add_argument('-i, --initial-noise', action='store', type=float, dest='initial_noise', help='initial noise in ms (default: 0.1)', default=0.1)
+parser.add_argument('-w, --window-size', action='store', type=int, dest='window_size', help='hamming window size (default: 1024)', default=1024)
 parser.add_argument('-n, --noise-threshold', action='store', type=int, dest='noise_threshold', help='noise thresold (default: 3)', default=3)
 args = parser.parse_args()
 
@@ -138,10 +145,8 @@ num_frames = input_file.nframes
 
 output_file = Sndfile(args.output_file, 'w', Format(type=input_file.file_format, encoding='pcm16', endianness=input_file.endianness), input_file.channels, fs)
 
-if args.window_size == 0:
-    args.window_size = int(np.fix(0.025 * fs))
-
 chunk_size = int(np.fix(60*fs))
+saved_params = None
 
 frames_read = 0
 while (frames_read < num_frames):
@@ -149,7 +154,7 @@ while (frames_read < num_frames):
     signal = input_file.read_frames(frames)
     frames_read = frames_read + frames
 
-    output = MMSESTSA85(signal, fs, args.initial_noise, args.window_size, args.noise_threshold)
+    output, saved_params = MMSESTSA(signal, fs, args.initial_noise, args.window_size, args.noise_threshold, saved_params)
 
     output = np.array(output*np.iinfo(np.int16).max, dtype=np.int16)
     output_file.write_frames(output)
